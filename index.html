@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Camera Roll Transcriber</title>
+<style>
+/* Layout: one narrow column built for a phone. Setup card, big picker, then a queue of per video results. */
+:root {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --ink: #131f2a;
+  --muted: #566877;
+  --line: #d8dfe5;
+  --accent: #1d5fbf;
+  --accent-ink: #ffffff;
+  --good: #14733f;
+  --warn: #8f5600;
+  --bad: #b3261e;
+  --chip: #e9eef3;
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1418; --surface: #161e24; --ink: #e7edf2; --muted: #93a3b1; --line: #27333c;
+    --accent: #6ea8ff; --accent-ink: #0b1620; --good: #5fd08f; --warn: #e3b05a; --bad: #ff8a80; --chip: #212c34;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1418; --surface: #161e24; --ink: #e7edf2; --muted: #93a3b1; --line: #27333c;
+  --accent: #6ea8ff; --accent-ink: #0b1620; --good: #5fd08f; --warn: #e3b05a; --bad: #ff8a80; --chip: #212c34;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--font);
+  padding-block: max(20px, env(safe-area-inset-top)) max(32px, env(safe-area-inset-bottom));
+  padding-inline: 16px;
+}
+main { max-width: 640px; margin-inline: auto; display: flex; flex-direction: column; gap: 16px; }
+h1 { font-size: 1.6rem; line-height: 1.15; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 1rem; margin: 0; }
+p { margin: 0; }
+.sub { color: var(--muted); margin-top: 6px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.hint, .foot { color: var(--muted); font-size: 0.875rem; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row input { flex: 1 1 12rem; min-width: 0; }
+input[type="password"], input[type="url"] {
+  font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px; width: 100%;
+}
+button {
+  font: inherit; font-weight: 600; cursor: pointer; border-radius: 8px; padding: 10px 14px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); min-height: 44px;
+}
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.small { min-height: 38px; padding: 6px 12px; font-size: 0.875rem; }
+button:disabled { opacity: 0.5; cursor: default; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.status { font-size: 0.875rem; min-height: 1.3em; }
+.status.ok { color: var(--good); }
+.status.bad { color: var(--bad); }
+.opts { display: flex; flex-direction: column; gap: 8px; }
+.check { display: flex; gap: 10px; align-items: flex-start; }
+.check input { width: 20px; height: 20px; margin-top: 2px; flex: none; accent-color: var(--accent); }
+details summary { cursor: pointer; color: var(--muted); font-size: 0.875rem; min-height: 32px; display: flex; align-items: center; }
+details > div { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+details label { font-size: 0.875rem; color: var(--muted); }
+.pick {
+  display: flex; flex-direction: column; gap: 4px; align-items: center; text-align: center; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink); border-radius: 12px; padding: 22px 16px;
+}
+.pick .t { font-size: 1.15rem; font-weight: 700; }
+.pick .s { font-size: 0.875rem; opacity: 0.9; }
+.pick.off { opacity: 0.55; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.queueHead { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.bulk { display: flex; gap: 8px; flex-wrap: wrap; }
+ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+li { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.name { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.meta { color: var(--muted); font-size: 0.8125rem; }
+.chip { font-size: 0.75rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--chip); color: var(--muted); white-space: nowrap; flex: none; }
+.chip.done { color: var(--good); }
+.chip.error, .chip.interrupted { color: var(--bad); }
+.chip.uploading, .chip.transcribing { color: var(--accent); }
+.bar { height: 6px; background: var(--chip); border-radius: 999px; overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--accent); width: 0; transition: width .2s; }
+.bar.indet > span { width: 40%; animation: slide 1.2s ease-in-out infinite alternate; }
+@keyframes slide { from { margin-left: 0; } to { margin-left: 60%; } }
+@media (prefers-reduced-motion: reduce) { .bar.indet > span { animation: none; width: 100%; opacity: .5; } .bar > span { transition: none; } }
+.err { color: var(--bad); font-size: 0.875rem; overflow-wrap: anywhere; }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+pre.txt { font: 0.9rem/1.55 var(--font); white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; max-height: 22rem; overflow: auto; background: var(--bg); border-radius: 8px; padding: 12px; user-select: text; -webkit-user-select: text; }
+.fine { color: var(--muted); font-size: 0.8125rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Camera Roll Transcriber</h1>
+    <p class="sub">Pick videos from your phone and get a text transcript for each one.</p>
+  </header>
+
+  <section class="card" aria-labelledby="setupTitle">
+    <h2 id="setupTitle">AssemblyAI key</h2>
+    <p class="hint">Paste your key once. It stays in this browser and is sent only to AssemblyAI.</p>
+    <div class="row">
+      <input id="key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste API key" aria-label="AssemblyAI API key">
+      <button id="saveKey" type="button">Test key</button>
+    </div>
+    <p id="keyStatus" class="status" role="status"></p>
+    <div class="opts">
+      <label class="check"><input type="checkbox" id="optSpeakers" checked><span>Label speakers</span></label>
+      <label class="check"><input type="checkbox" id="optDetect"><span>Detect the language (turn on for videos not in English)</span></label>
+    </div>
+    <details>
+      <summary>Advanced</summary>
+      <div>
+        <label for="relay">Relay address. Leave empty to connect straight to AssemblyAI.</label>
+        <input id="relay" type="url" placeholder="https://" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </div>
+    </details>
+  </section>
+
+  <section>
+    <label class="pick" id="pickLabel" for="files">
+      <span class="t">Choose videos</span>
+      <span class="s">Opens your camera roll. Select as many as you like.</span>
+    </label>
+    <input class="sr" id="files" type="file" accept="video/*,audio/*" multiple>
+  </section>
+
+  <section id="queueWrap" hidden>
+    <div class="queueHead">
+      <h2>Transcripts</h2>
+      <div class="bulk">
+        <button class="small" id="copyAll" type="button">Copy all</button>
+        <button class="small" id="saveAll" type="button">Save all</button>
+        <button class="small" id="clearDone" type="button">Clear finished</button>
+      </div>
+    </div>
+    <ul id="queue"></ul>
+  </section>
+
+  <p class="foot">Keep this page open and the screen on while files upload. Videos upload at full size, so Wi-Fi is best. Finished transcripts are kept on this phone until you clear them.</p>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var API = "https://api.assemblyai.com";
+  var POLL_MS = (window.__POLL_MS || 3000);
+  var LS = { key: "crt.key", items: "crt.items.v1", opts: "crt.opts.v1" };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var els = {
+    key: $("key"), saveKey: $("saveKey"), keyStatus: $("keyStatus"), speakers: $("optSpeakers"),
+    detect: $("optDetect"), relay: $("relay"), files: $("files"), pickLabel: $("pickLabel"),
+    queueWrap: $("queueWrap"), queue: $("queue"), copyAll: $("copyAll"), saveAll: $("saveAll"), clearDone: $("clearDone")
+  };
+
+  var items = [];          // persisted fields only: uid, name, size, status, progress, tid, text, error, open
+  var fileMap = {};        // uid -> File (memory only)
+  var uploading = false;
+  var polling = {};        // uid -> true
+  var wake = null;
+  var uidN = 0;
+
+  /* ---------- storage ---------- */
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function persist() {
+    lsSet(LS.items, JSON.stringify(items));
+  }
+  function saveOpts() {
+    lsSet(LS.opts, JSON.stringify({ speakers: els.speakers.checked, detect: els.detect.checked, relay: els.relay.value.trim() }));
+  }
+
+  /* ---------- helpers ---------- */
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function base() { var r = els.relay.value.trim().replace(/\/+$/, ""); return r || API; }
+  function key() { return els.key.value.trim(); }
+  function fmtSize(n) {
+    if (n >= 1073741824) return (n / 1073741824).toFixed(2) + " GB";
+    if (n >= 1048576) return (n / 1048576).toFixed(0) + " MB";
+    return Math.max(1, Math.round(n / 1024)) + " KB";
+  }
+  function stem(name) { return name.replace(/\.[^.]+$/, "") || name; }
+  function setKeyStatus(msg, cls) { els.keyStatus.textContent = msg; els.keyStatus.className = "status" + (cls ? " " + cls : ""); }
+  function fail(msg, status, fatal) { var e = new Error(msg); e.status = status; e.fatal = !!fatal; return e; }
+
+  function explain(e) {
+    if (e && e.status) return e.message;
+    return "Could not reach AssemblyAI. Check your connection. If you are online, your browser may be blocking the request, and a relay address under Advanced will be needed.";
+  }
+
+  /* ---------- API ---------- */
+  function api(method, path, body) {
+    var opts = { method: method, headers: { authorization: key() } };
+    if (body) { opts.headers["content-type"] = "application/json"; opts.body = JSON.stringify(body); }
+    return fetch(base() + path, opts).then(function (res) {
+      return res.text().then(function (t) {
+        var j = null; try { j = t ? JSON.parse(t) : null; } catch (e) {}
+        if (!res.ok) {
+          var m = (j && (j.error || j.message)) || ("AssemblyAI returned status " + res.status + ".");
+          if (res.status === 401 || res.status === 403) m = "AssemblyAI rejected the key. Check that it was pasted in full.";
+          throw fail(m, res.status, res.status === 401 || res.status === 403);
+        }
+        return j;
+      });
+    });
+  }
+
+  function uploadFile(file, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var x = new XMLHttpRequest();
+      x.open("POST", base() + "/v2/upload");
+      x.setRequestHeader("authorization", key());
+      x.setRequestHeader("content-type", "application/octet-stream");
+      x.upload.onprogress = function (ev) { if (ev.lengthComputable) onProgress(ev.loaded / ev.total); };
+      x.onerror = function () { reject(new Error("network")); };
+      x.ontimeout = function () { reject(new Error("network")); };
+      x.onload = function () {
+        var j = null; try { j = JSON.parse(x.responseText); } catch (e) {}
+        if (x.status >= 200 && x.status < 300 && j && j.upload_url) return resolve(j.upload_url);
+        var m = (j && (j.error || j.message)) || ("Upload failed with status " + x.status + ".");
+        if (x.status === 401 || x.status === 403) m = "AssemblyAI rejected the key. Check that it was pasted in full.";
+        reject(fail(m, x.status, true));
+      };
+      x.send(file);
+    });
+  }
+
+  function formatTranscript(r) {
+    var u = r.utterances;
+    if (Array.isArray(u) && u.length) {
+      var speakers = {}; u.forEach(function (x) { speakers[x.speaker] = 1; });
+      var multi = Object.keys(speakers).length > 1;
+      return u.map(function (x) { return (multi ? "Speaker " + x.speaker + ": " : "") + x.text; }).join("\n\n");
+    }
+    return (r.text && r.text.trim()) ? r.text : "(No speech was detected in this video.)";
+  }
+
+  /* ---------- queue engine ---------- */
+  function addFiles(list) {
+    Array.prototype.forEach.call(list, function (f) {
+      var uid = "f" + Date.now().toString(36) + (uidN++);
+      fileMap[uid] = f;
+      items.push({ uid: uid, name: f.name || "video", size: f.size, status: "queued", progress: 0, tid: "", text: "", error: "", open: false });
+    });
+    persist(); render(); pump();
+  }
+
+  function pump() {
+    if (uploading) return;
+    var next = items.find(function (i) { return i.status === "queued" && fileMap[i.uid]; });
+    if (!next) { syncWake(); return; }
+    if (!key()) { setKeyStatus("Paste your AssemblyAI key above first.", "bad"); next.status = "error"; next.error = "No API key yet. Add it above, then choose Try again."; persist(); render(); return; }
+    uploading = true; next.status = "uploading"; next.progress = 0; next.error = ""; render(); syncWake();
+    uploadFile(fileMap[next.uid], function (p) { next.progress = p; scheduleRender(); })
+      .then(function (url) {
+        var body = { audio_url: url, speaker_labels: !!els.speakers.checked };
+        if (els.detect.checked) body.language_detection = true;
+        return api("POST", "/v2/transcript", body);
+      })
+      .then(function (t) {
+        next.tid = t.id; next.status = "transcribing"; next.progress = 1; persist(); render();
+        delete fileMap[next.uid];
+        startPoll(next);
+      })
+      .catch(function (e) { next.status = "error"; next.error = explain(e); persist(); render(); })
+      .then(function () { uploading = false; pump(); });
+  }
+
+  function startPoll(item) {
+    if (polling[item.uid] || !item.tid) return;
+    polling[item.uid] = true; item.status = "transcribing"; item.error = ""; render(); syncWake();
+    var fails = 0;
+    (function loop() {
+      sleep(POLL_MS).then(function () { return api("GET", "/v2/transcript/" + item.tid); })
+        .then(function (r) {
+          fails = 0;
+          if (r.status === "completed") { item.text = formatTranscript(r); item.status = "done"; finish(item); return; }
+          if (r.status === "error") { item.status = "error"; item.error = r.error || "AssemblyAI could not transcribe this file."; item.tid = ""; finish(item); return; }
+          loop();
+        })
+        .catch(function (e) {
+          if (e && e.fatal) { item.status = "error"; item.error = explain(e); finish(item); return; }
+          if (++fails >= 8) { item.status = "error"; item.error = "Lost the connection while waiting. Choose Check again once you are back online."; finish(item); return; }
+          loop();
+        });
+    })();
+  }
+  function finish(item) { delete polling[item.uid]; persist(); render(); syncWake(); }
+
+  /* ---------- wake lock and unload guard ---------- */
+  function busy() { return items.some(function (i) { return i.status === "queued" || i.status === "uploading" || i.status === "transcribing"; }); }
+  function syncWake() {
+    if (busy() && !wake && navigator.wakeLock) {
+      navigator.wakeLock.request("screen").then(function (w) { wake = w; w.addEventListener("release", function () { wake = null; }); }).catch(function () {});
+    } else if (!busy() && wake) { wake.release().catch(function () {}); wake = null; }
+  }
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") syncWake(); });
+  window.addEventListener("beforeunload", function (e) { if (uploading) { e.preventDefault(); e.returnValue = ""; } });
+
+  /* ---------- output ---------- */
+  function download(name, text) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+  }
+  function copy(text, btn) {
+    function done(ok) { var old = btn.textContent; btn.textContent = ok ? "Copied" : "Press and hold the text to copy"; setTimeout(function () { btn.textContent = old; }, 1800); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallbackCopy(text)); });
+    } else { done(fallbackCopy(text)); }
+  }
+  function fallbackCopy(text) {
+    var t = document.createElement("textarea"); t.value = text; t.setAttribute("readonly", "");
+    t.style.position = "fixed"; t.style.opacity = "0"; document.body.appendChild(t); t.select();
+    var ok = false; try { ok = document.execCommand("copy"); } catch (e) {} t.remove(); return ok;
+  }
+  function allText() {
+    return items.filter(function (i) { return i.status === "done"; })
+      .map(function (i) { return "Transcript: " + i.name + "\n\n" + i.text; }).join("\n\n\n");
+  }
+
+  /* ---------- render ---------- */
+  var renderTimer = 0;
+  function scheduleRender() { if (renderTimer) return; renderTimer = setTimeout(function () { renderTimer = 0; render(); }, 200); }
+
+  var LABEL = { queued: "Waiting", uploading: "Uploading", transcribing: "Transcribing", done: "Done", error: "Failed", interrupted: "Choose file again" };
+
+  function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  function btn(label, fn, cls) { var b = el("button", "small" + (cls ? " " + cls : ""), label); b.type = "button"; b.addEventListener("click", function () { fn(b); }); return b; }
+
+  function render() {
+    els.queueWrap.hidden = items.length === 0;
+    var anyDone = items.some(function (i) { return i.status === "done"; });
+    els.copyAll.disabled = els.saveAll.disabled = !anyDone;
+    els.clearDone.disabled = !items.some(function (i) { return i.status === "done" || i.status === "error" || i.status === "interrupted"; });
+    els.queue.textContent = "";
+    items.forEach(function (it) {
+      var li = el("li");
+      var top = el("div", "top");
+      var left = el("div"); left.style.minWidth = "0";
+      left.appendChild(el("div", "name", it.name));
+      left.appendChild(el("div", "meta", fmtSize(it.size)));
+      var label = LABEL[it.status] || it.status;
+      if (it.status === "uploading") label = "Uploading " + Math.round(it.progress * 100) + "%";
+      top.appendChild(left); top.appendChild(el("span", "chip " + it.status, label));
+      li.appendChild(top);
+
+      if (it.status === "uploading" || it.status === "transcribing") {
+        var bar = el("div", "bar" + (it.status === "transcribing" ? " indet" : ""));
+        var fill = el("span"); if (it.status === "uploading") fill.style.width = Math.round(it.progress * 100) + "%";
+        bar.appendChild(fill); li.appendChild(bar);
+      }
+      if (it.status === "error" || it.status === "interrupted") {
+        if (it.error) li.appendChild(el("p", "err", it.error));
+        var a = el("div", "acts");
+        if (it.tid && it.status === "error") a.appendChild(btn("Check again", function () { startPoll(it); }));
+        else if (fileMap[it.uid]) a.appendChild(btn("Try again", function () { it.status = "queued"; it.error = ""; persist(); render(); pump(); }));
+        if (it.status === "interrupted") a.appendChild(el("span", "fine", "The page was closed before this one finished uploading. Choose the video again."));
+        a.appendChild(btn("Remove", function () { removeItem(it); }));
+        li.appendChild(a);
+      }
+      if (it.status === "done") {
+        var d = el("details"); d.open = !!it.open;
+        d.addEventListener("toggle", function () { it.open = d.open; persist(); });
+        var s = el("summary", null, "Show transcript"); d.appendChild(s);
+        var inner = el("div"); inner.appendChild(el("pre", "txt", it.text)); d.appendChild(inner);
+        li.appendChild(d);
+        var acts = el("div", "acts");
+        acts.appendChild(btn("Copy", function (b) { copy(it.text, b); }));
+        acts.appendChild(btn("Save .txt", function () { download(stem(it.name) + ".txt", it.text); }));
+        acts.appendChild(btn("Remove", function () { removeItem(it); }));
+        li.appendChild(acts);
+      }
+      els.queue.appendChild(li);
+    });
+  }
+  function removeItem(it) { items = items.filter(function (x) { return x !== it; }); delete fileMap[it.uid]; persist(); render(); }
+
+  /* ---------- wiring ---------- */
+  els.files.addEventListener("change", function () { if (els.files.files.length) addFiles(els.files.files); els.files.value = ""; });
+  els.copyAll.addEventListener("click", function () { copy(allText(), els.copyAll); });
+  els.saveAll.addEventListener("click", function () { download("transcripts.txt", allText()); });
+  els.clearDone.addEventListener("click", function () {
+    items = items.filter(function (i) { return !(i.status === "done" || i.status === "error" || i.status === "interrupted"); });
+    persist(); render();
+  });
+  [els.speakers, els.detect].forEach(function (c) { c.addEventListener("change", saveOpts); });
+  els.relay.addEventListener("change", saveOpts);
+
+  function testKey() {
+    var k = key();
+    if (!k) { setKeyStatus("Paste your key first.", "bad"); return; }
+    lsSet(LS.key, k); saveOpts();
+    setKeyStatus("Checking the key...", "");
+    els.saveKey.disabled = true;
+    api("GET", "/v2/transcript?limit=1").then(function () { setKeyStatus("Key works. Saved on this phone.", "ok"); })
+      .catch(function (e) { setKeyStatus(explain(e), "bad"); })
+      .then(function () { els.saveKey.disabled = false; });
+  }
+  els.saveKey.addEventListener("click", testKey);
+  els.key.addEventListener("keydown", function (e) { if (e.key === "Enter") testKey(); });
+
+  /* ---------- startup ---------- */
+  var k = lsGet(LS.key); if (k) { els.key.value = k; setKeyStatus("Key saved on this phone.", "ok"); }
+  try {
+    var o = JSON.parse(lsGet(LS.opts) || "null");
+    if (o) { els.speakers.checked = o.speakers !== false; els.detect.checked = !!o.detect; els.relay.value = o.relay || ""; }
+  } catch (e) {}
+  try { items = JSON.parse(lsGet(LS.items) || "[]") || []; } catch (e) { items = []; }
+  items.forEach(function (it) {
+    if (it.status === "uploading" || it.status === "queued") { it.status = "interrupted"; it.error = ""; }
+  });
+  render();
+  items.forEach(function (it) { if (it.status === "transcribing" && key()) startPoll(it); });
+  window.__crt = { items: function () { return items; } };
+})();
+</script>
+</body>
+</html>
