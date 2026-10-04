@@ -187,7 +187,14 @@ pre.txt { font: 0.9rem/1.55 var(--font); white-space: pre-wrap; overflow-wrap: a
   /* ---------- helpers ---------- */
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function base() { var r = els.relay.value.trim().replace(/\/+$/, ""); return r || API; }
-  function key() { return els.key.value.trim(); }
+  // Keys contain no spaces, so drop any whitespace or invisible characters picked up while pasting.
+  function key() { return els.key.value.replace(/[\s​-‍﻿]/g, ""); }
+  function keyProblem() {
+    var k = key();
+    if (!k) return "Paste your key first.";
+    if (/[^\x21-\x7E]/.test(k)) return "The key box holds a character that cannot be part of a key, such as a curly quote or an accented letter. Clear the box and paste only the key from AssemblyAI.";
+    return "";
+  }
   function fmtSize(n) {
     if (n >= 1073741824) return (n / 1073741824).toFixed(2) + " GB";
     if (n >= 1048576) return (n / 1048576).toFixed(0) + " MB";
@@ -197,9 +204,23 @@ pre.txt { font: 0.9rem/1.55 var(--font); white-space: pre-wrap; overflow-wrap: a
   function setKeyStatus(msg, cls) { els.keyStatus.textContent = msg; els.keyStatus.className = "status" + (cls ? " " + cls : ""); }
   function fail(msg, status, fatal) { var e = new Error(msg); e.status = status; e.fatal = !!fatal; return e; }
 
+  function say(msg) { var e = new Error(msg); e.say = true; e.fatal = true; return e; }
+  function isKnown(e) { return !!(e && (e.status || e.say)); }
+
   function explain(e) {
-    if (e && e.status) return e.message;
-    return "Could not reach AssemblyAI. Check your connection. If you are online, your browser may be blocking the request, and a relay address under Advanced will be needed.";
+    if (isKnown(e)) return e.message;
+    return "Could not reach AssemblyAI. Checking why...";
+  }
+
+  // A failed request says little. Probe the address in a way that ignores browser blocking to tell the two causes apart.
+  function networkHelp(err) {
+    var host; try { host = new URL(base()).host; } catch (e) { host = base(); }
+    var raw = err && err.message ? " Browser message: " + err.message + "." : "";
+    return fetch(base() + "/v2/transcript?limit=1", { mode: "no-cors" }).then(function () {
+      return "Your phone can reach " + host + ", but the browser blocks the request. That means " + host + " does not accept requests from web pages, and a relay address under Advanced is needed." + raw;
+    }, function () {
+      return "Your phone could not connect to " + host + " at all. Check Wi-Fi or cellular, turn off any VPN, private relay or content blocker for this site, then try again." + raw;
+    });
   }
 
   /* ---------- recording date, read from the video file on this phone ---------- */
@@ -317,6 +338,7 @@ pre.txt { font: 0.9rem/1.55 var(--font); white-space: pre-wrap; overflow-wrap: a
 
   /* ---------- API ---------- */
   function api(method, path, body) {
+    var kp = keyProblem(); if (kp) return Promise.reject(say(kp));
     var opts = { method: method, headers: { authorization: key() } };
     if (body) { opts.headers["content-type"] = "application/json"; opts.body = JSON.stringify(body); }
     return fetch(base() + path, opts).then(function (res) {
@@ -333,6 +355,7 @@ pre.txt { font: 0.9rem/1.55 var(--font); white-space: pre-wrap; overflow-wrap: a
   }
 
   function uploadFile(file, onProgress) {
+    var kp = keyProblem(); if (kp) return Promise.reject(say(kp));
     return new Promise(function (resolve, reject) {
       var x = new XMLHttpRequest();
       x.open("POST", base() + "/v2/upload");
@@ -395,7 +418,10 @@ pre.txt { font: 0.9rem/1.55 var(--font); white-space: pre-wrap; overflow-wrap: a
         delete fileMap[next.uid];
         startPoll(next);
       })
-      .catch(function (e) { next.status = "error"; next.error = explain(e); persist(); render(); })
+      .catch(function (e) {
+        next.status = "error"; next.error = explain(e); persist(); render();
+        if (!isKnown(e)) networkHelp(e).then(function (m) { next.error = m; persist(); render(); });
+      })
       .then(function () { uploading = false; pump(); });
   }
 
@@ -524,13 +550,17 @@ pre.txt { font: 0.9rem/1.55 var(--font); white-space: pre-wrap; overflow-wrap: a
   els.relay.addEventListener("change", saveOpts);
 
   function testKey() {
-    var k = key();
-    if (!k) { setKeyStatus("Paste your key first.", "bad"); return; }
-    lsSet(LS.key, k); saveOpts();
+    var kp = keyProblem();
+    if (kp) { setKeyStatus(kp, "bad"); return; }
+    lsSet(LS.key, key()); saveOpts();
     setKeyStatus("Checking the key...", "");
     els.saveKey.disabled = true;
     api("GET", "/v2/transcript?limit=1").then(function () { setKeyStatus("Key works. Saved on this phone.", "ok"); })
-      .catch(function (e) { setKeyStatus(explain(e), "bad"); })
+      .catch(function (e) {
+        if (isKnown(e)) { setKeyStatus(e.message, "bad"); return; }
+        setKeyStatus("Could not reach AssemblyAI. Checking why...", "");
+        return networkHelp(e).then(function (m) { setKeyStatus(m, "bad"); });
+      })
       .then(function () { els.saveKey.disabled = false; });
   }
   els.saveKey.addEventListener("click", testKey);
